@@ -38,6 +38,11 @@ type Node struct {
 	lastIncludedIndex int
 	lastIncludedTerm  int
 
+	// leaderID is the most recent leader this node has heard from via
+	// AppendEntries. -1 means unknown. Used to redirect clients that
+	// accidentally contact a follower.
+	leaderID int
+
 	// --- Election timing ---
 	// electionResetAt is bumped every time we see a valid heartbeat or
 	// vote for someone; the election timer goroutine checks against it
@@ -68,6 +73,7 @@ func NewNode(id int, peers []int, transport Transport, persister Persister, appl
 		lastApplied: 0,
 		nextIndex:   make(map[int]int),
 		matchIndex:  make(map[int]int),
+		leaderID:    -1,
 		stopCh:      make(chan struct{}),
 	}
 	n.restoreLocked() // pick up any prior persisted state, if this isn't a fresh start

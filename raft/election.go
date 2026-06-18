@@ -107,6 +107,7 @@ func (n *Node) becomeFollowerLocked(term int) {
 // at zero until we hear otherwise).
 func (n *Node) becomeLeaderLocked() {
 	n.state = Leader
+	n.leaderID = n.id
 	for _, peerID := range n.peers {
 		n.nextIndex[peerID] = len(n.log)
 		n.matchIndex[peerID] = 0

@@ -53,7 +53,7 @@ any special-casing inside the consensus code itself.
 
 - [x] Stage 1 — Scaffold: core types, RPC contracts, Transport/Persister interfaces
 - [x] Stage 2 — Leader election (RequestVote, randomized timeouts, heartbeats)
-- [ ] Stage 3 — Log replication
+- [x] Stage 3 — Log replication (AppendEntries, majority commit, fast backtracking, Submit API)
 - [ ] Stage 4 — KV store state machine + client API
 - [ ] Stage 5 — Crash-safe persistence
 - [ ] Stage 6 — Snapshotting / log compaction

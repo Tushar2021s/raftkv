@@ -1,73 +1,73 @@
 # raftkv
 
-A distributed, replicated key-value store built from scratch on top of a
-custom implementation of the Raft consensus algorithm
-([Ongaro & Ousterhout, 2014](https://raft.github.io/raft.pdf)).
-
-No consensus libraries, no gRPC, no off-the-shelf Raft package: every RPC,
-every election, every log-replication edge case, and the network layer
-itself are implemented from first principles in Go.
-
-## Why build the RPC layer from scratch instead of using gRPC?
-
-Two reasons. First, it forces a real understanding of how nodes actually
-agree on anything, rather than treating consensus as a library call.
-Second, it makes deterministic chaos-testing possible: the test harness
-swaps in a fully in-memory network that can drop, delay, or partition
-messages on command, instead of fighting real timing and real sockets to
-simulate failures. This is the same approach MIT's 6.5840 distributed
-systems course and FoundationDB's deterministic simulation framework use.
+A production-grade distributed key-value store built on the Raft consensus algorithm, written from scratch in Go without external dependencies beyond the standard library.
 
 ## Architecture
 
 ```
-                 ┌──────────────────────────┐
- client ───────► │   kvstore.Server (any     │
-                  │   node, redirects writes │
-                  │   to current leader)     │
-                  └─────────────┬─────────────┘
-                                │ Put/Get/Delete
-                  ┌─────────────▼─────────────┐
-                  │      raft.Node            │
-                  │  (election, replication,  │
-                  │   commit, snapshotting)    │
-                  └─────┬───────────────┬──────┘
-                        │               │
-              ┌─────────▼───┐   ┌───────▼────────┐
-              │ raft.Transport│  │ raft.Persister │
-              │ (interface)   │  │ (interface)    │
-              └─────┬─────┬───┘  └────────┬───────┘
-                    │     │               │
-       ┌────────────▼┐   ┌▼─────────────┐ ▼
-       │HTTPTransport │   │ SimNetwork   │ file-backed
-       │ (real cluster)│   │(chaos tests) │  persister
-       └──────────────┘   └──────────────┘
+┌──────────────────────────────────────────────────┐
+│  Client (HTTP / CLI)                             │
+└────────────────────┬─────────────────────────────┘
+                     │ REST API (PUT/GET/DELETE)
+┌────────────────────▼─────────────────────────────┐
+│  kvstore.Server  (HTTP handler + redirect logic)  │
+├───────────────────────────────────────────────────┤
+│  kvstore.StateMachine  (apply loop, dedup, snap)  │
+├───────────────────────────────────────────────────┤
+│  raft.Node  (leader election, log replication,    │
+│              snapshotting, crash recovery)         │
+├───────────────────────────────────────────────────┤
+│  Transport (LocalTransport for tests /            │
+│             HTTPTransport for real clusters)      │
+│  Persister (MemoryPersister / FilePersister)      │
+└───────────────────────────────────────────────────┘
 ```
-
-Raft's consensus logic (`raft/`) never imports `net/http` or touches a
-file directly — it only knows about the `Transport` and `Persister`
-interfaces. That's what makes the chaos-testing harness possible without
-any special-casing inside the consensus code itself.
 
 ## Progress
 
-- [x] Stage 1 — Scaffold: core types, RPC contracts, Transport/Persister interfaces
-- [x] Stage 2 — Leader election (RequestVote, randomized timeouts, heartbeats)
-- [x] Stage 3 — Log replication (AppendEntries, majority commit, fast backtracking, Submit API)
-- [x] Stage 4 — KV state machine + HTTP API (Put/Get/Delete, leader redirect, idempotent writes, CLI client)
-- [x] Stage 5 — Crash-safe persistence (FilePersister: fsync, atomic rename, CRC32 checksum, crash recovery)
-- [ ] Stage 6 — Snapshotting / log compaction
-- [ ] Stage 7 — Dynamic cluster membership changes
-- [ ] Stage 8 — Chaos-testing harness (simulated network)
-- [ ] Stage 9 — Benchmarks (throughput, latency percentiles, failover time)
+- [x] Stage 1 — Scaffold: types, RPC contracts, Transport/Persister interfaces
+- [x] Stage 2 — Leader election: RequestVote, randomised timeouts, split-vote recovery
+- [x] Stage 3 — Log replication: AppendEntries, majority commit, fast backtracking
+- [x] Stage 4 — KV state machine: HTTP API, leader redirect, idempotent writes, CLI client
+- [x] Stage 5 — Crash-safe persistence: fsync, atomic rename, CRC32 checksums
+- [x] Stage 6 — Snapshotting / log compaction: TakeSnapshot, InstallSnapshot RPC, auto-compaction
+- [ ] Stage 7 — Dynamic membership changes (add/remove nodes live)
+- [ ] Stage 8 — Chaos-testing harness (simulated network partitions, drops, kills)
+- [ ] Stage 9 — Benchmarking (throughput, latency percentiles, failover time)
+- [ ] Stage 10 — Architecture write-up with real numbers
 
-## Layout
+## Running a real 3-node cluster
 
-| Path | Purpose |
+```bash
+# Terminal 1
+go run ./cmd/server -id 0 -cluster localhost:7000:8000,localhost:7001:8001,localhost:7002:8002
+
+# Terminal 2
+go run ./cmd/server -id 1 -cluster localhost:7000:8000,localhost:7001:8001,localhost:7002:8002
+
+# Terminal 3
+go run ./cmd/server -id 2 -cluster localhost:7000:8000,localhost:7001:8001,localhost:7002:8002
+
+# Terminal 4 — interact
+go run ./cmd/client -server localhost:8000 put name tushar
+go run ./cmd/client -server localhost:8000 get name
+go run ./cmd/client -server localhost:8001 status
+```
+
+## Key engineering decisions
+
+| Decision | Why |
 |---|---|
-| `raft/` | Core consensus: election, replication, persistence, snapshotting |
-| `transport/` | Concrete `Transport` implementations: real HTTP, and the simulated network used for testing |
-| `kvstore/` | The key-value state machine and client-facing API that sits on top of Raft |
-| `cmd/server`, `cmd/client` | Runnable binaries |
-| `chaos/` | Fault-injection test scenarios |
-| `bench/` | Throughput/latency benchmarking |
+| Hand-rolled HTTP/JSON RPC | No gRPC toolchain needed; every RPC is curl-able |
+| `logicalToPhysical()` for all log indexing | Safe after compaction; no-op before first snapshot |
+| Atomic write-then-rename with fsync | Crash mid-write never corrupts the file |
+| CRC32 checksum prefix on persisted files | Detects bit-rot and truncated writes on read |
+| Signal pending *before* TakeSnapshot | Client latency excludes compaction time |
+| Reset nextIndex after TakeSnapshot | Eliminates race between compaction and replication |
+| Synchronous snapshot in apply loop | Snapshot on disk before next replication round |
+
+## Running tests
+
+```bash
+go test ./... -v -race
+```

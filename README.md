@@ -32,7 +32,7 @@ A production-grade distributed key-value store built on the Raft consensus algor
 - [x] Stage 5 — Crash-safe persistence: fsync, atomic rename, CRC32 checksums
 - [x] Stage 6 — Snapshotting / log compaction: TakeSnapshot, InstallSnapshot RPC, auto-compaction
 - [x] Stage 7 — Dynamic membership changes: joint consensus, AddMember, RemoveMember, leader self-removal
-- [ ] Stage 8 — Chaos-testing harness (simulated network partitions, drops, kills)
+- [x] Stage 8 — Chaos testing: SimNetwork fault injection, leader crash (failover 300–450ms), partition recovery, 20% packet loss, split-brain prevention, ~800 ops/sec throughput
 - [ ] Stage 9 — Benchmarking (throughput, latency percentiles, failover time)
 - [ ] Stage 10 — Architecture write-up with real numbers
 

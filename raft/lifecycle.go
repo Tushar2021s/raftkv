@@ -97,12 +97,7 @@ func (n *Node) applyLoop() {
 				// lock — they update n.clusterConfig and n.peers
 				// immediately so that the new quorum rules are in
 				// effect for the very next entry.
-				if isConfigChangeCommand(entry.Command) {
-					cc, err := decodeConfigChange(entry.Command)
-					if err == nil {
-						n.applyConfigChangeLocked(cc)
-					}
-					// Don't forward to the state machine.
+				if entry.Type == EntryConfig {
 					continue
 				}
 

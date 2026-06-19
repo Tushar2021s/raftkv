@@ -18,14 +18,14 @@ var (
 //
 // The two-phase protocol (§6):
 //
-//  Phase 1 — leader appends C_old,new entry. Every node switches to
-//            joint config the moment it appends this entry. In joint
-//            config a majority of BOTH C_old and C_new must agree for
-//            anything to commit — this prevents two separate majorities
-//            from being elected at the same time.
+//	Phase 1 — leader appends C_old,new entry. Every node switches to
+//	          joint config the moment it appends this entry. In joint
+//	          config a majority of BOTH C_old and C_new must agree for
+//	          anything to commit — this prevents two separate majorities
+//	          from being elected at the same time.
 //
-//  Phase 2 — once C_old,new commits, leader immediately appends C_new
-//            entry. Once C_new commits, nodes in C_old-only drop out.
+//	Phase 2 — once C_old,new commits, leader immediately appends C_new
+//	          entry. Once C_new commits, nodes in C_old-only drop out.
 //
 // Between phase 1 and phase 2 the leader replicates to ALL members of
 // C_old ∪ C_new, so the new node receives a snapshot if it's behind.
@@ -145,8 +145,25 @@ func (n *Node) applyConfigLocked(args ConfigChangeArgs) {
 		n.configOld = ClusterConfig{}
 
 		// peers = C_new members except self.
+
 		n.peers = without(args.New.Members, n.id)
 
+		allowed := make(map[int]bool)
+		for _, id := range n.peers {
+			allowed[id] = true
+		}
+
+		for id := range n.nextIndex {
+			if !allowed[id] {
+				delete(n.nextIndex, id)
+			}
+		}
+
+		for id := range n.matchIndex {
+			if !allowed[id] {
+				delete(n.matchIndex, id)
+			}
+		}
 		// If the leader just removed itself, step down.
 		if n.state == Leader {
 			selfInNew := false
@@ -172,9 +189,18 @@ func (n *Node) commitConfigLocked(entry LogEntry) {
 	if err := json.Unmarshal(entry.Command, &args); err != nil {
 		return
 	}
+	// if !args.IsJoint {
+	// 	// C_new committed — transition complete.
+	// 	n.pendingConfigIndex = -1
+	// 	return
+	// }
 	if !args.IsJoint {
-		// C_new committed — transition complete.
+		// Final config committed.
+		n.applyConfigLocked(args)
+
 		n.pendingConfigIndex = -1
+		n.persistLocked()
+
 		return
 	}
 
@@ -234,7 +260,28 @@ func majority(group []int, matches map[int]bool) bool {
 // --------------------------------------------------------------------------
 // helpers
 // --------------------------------------------------------------------------
+func (n *Node) isMemberLocked(id int) bool {
+	var members []int
 
+	if n.configJoint {
+		members = dedupSorted(
+			append(
+				append([]int{}, n.configOld.Members...),
+				n.configNew.Members...,
+			),
+		)
+	} else {
+		members = n.configStable.Members
+	}
+
+	for _, m := range members {
+		if m == id {
+			return true
+		}
+	}
+
+	return false
+}
 func dedupSorted(ids []int) []int {
 	seen := make(map[int]bool)
 	result := ids[:0]
@@ -258,3 +305,47 @@ func without(ids []int, remove int) []int {
 	return result
 }
 
+func (n *Node) quorumReachedLocked(index int) bool {
+	matches := make(map[int]bool)
+
+	matches[n.id] = true
+
+	for id, match := range n.matchIndex {
+		if match >= index {
+			matches[id] = true
+		}
+	}
+
+	return n.quorumReached(matches)
+}
+func (n *Node) AddServer(id int) *AddServerReply {
+	err := n.AddMember(id)
+
+	if err != nil {
+		return &AddServerReply{
+			Success:  false,
+			LeaderID: n.leaderID,
+			Err:      err.Error(),
+		}
+	}
+
+	return &AddServerReply{
+		Success: true,
+	}
+}
+
+func (n *Node) RemoveServer(id int) *RemoveServerReply {
+	err := n.RemoveMember(id)
+
+	if err != nil {
+		return &RemoveServerReply{
+			Success:  false,
+			LeaderID: n.leaderID,
+			Err:      err.Error(),
+		}
+	}
+
+	return &RemoveServerReply{
+		Success: true,
+	}
+}

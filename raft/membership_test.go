@@ -158,7 +158,7 @@ func TestRemoveMember(t *testing.T) {
 
 	// Remove a follower (not the leader).
 	removeIdx := -1
-	for i, node := range c.nodes {
+	for i := range c.nodes {
 		if i != leaderIdx {
 			removeIdx = i
 			break

@@ -8,6 +8,12 @@ import "sync"
 // Leader.
 func (n *Node) startElection() {
 	n.mu.Lock()
+
+	if !n.isMemberLocked(n.id) {
+		n.mu.Unlock()
+		return
+	}
+
 	n.state = Candidate
 	n.currentTerm++
 	term := n.currentTerm
@@ -80,7 +86,12 @@ func (n *Node) HandleRequestVote(args *RequestVoteArgs) *RequestVoteReply {
 	if args.Term > n.currentTerm {
 		n.becomeFollowerLocked(args.Term)
 	}
-
+	if !n.isMemberLocked(args.CandidateID) {
+		return &RequestVoteReply{
+			Term:        n.currentTerm,
+			VoteGranted: false,
+		}
+	}
 	lastLogIndex := n.lastLogIndexLocked()
 	lastLogTerm := n.lastLogTermLocked()
 

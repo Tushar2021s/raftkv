@@ -1,7 +1,6 @@
 package raft
 
 import (
-	"encoding/json"
 	"time"
 )
 
@@ -235,9 +234,28 @@ func (n *Node) updateCommitIndexLocked() {
 			continue
 		}
 		if n.quorumReachedLocked(idx) {
+			oldCommit := n.commitIndex
 			n.commitIndex = idx
+
+			// Process newly committed config entries.
+			for i := oldCommit + 1; i <= idx; i++ {
+				phys := n.logicalToPhysical(i)
+				if phys <= 0 || phys >= len(n.log) {
+					continue
+				}
+
+				entry := n.log[phys]
+
+				if entry.Type == EntryConfig {
+					n.commitConfigLocked(entry)
+				}
+			}
+
 			return
 		}
+		// if n.quorumReachedLocked(idx) {
+		// 	n.commitIndex = idx
+		// 	return
+		// }
 	}
 }
-

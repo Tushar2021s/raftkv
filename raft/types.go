@@ -56,8 +56,8 @@ type ApplyMsg struct {
 
 // ConfigChangeType distinguishes the two phases of joint consensus.
 // A membership change always goes through both phases in order:
-//   1. JointConfig  — both old and new majority must agree to commit
-//   2. NewConfig    — new majority only; joint phase is complete
+//  1. JointConfig  — both old and new majority must agree to commit
+//  2. NewConfig    — new majority only; joint phase is complete
 type ConfigChangeType int
 
 const (
@@ -69,9 +69,9 @@ const (
 // entry. Raft carries it as opaque []byte just like any other command;
 // the Node itself decodes it and updates its peer list accordingly.
 type ConfigChange struct {
-	Type    ConfigChangeType `json:"type"`
-	OldPeers []int          `json:"oldPeers"` // meaningful only for JointConfig
-	NewPeers []int          `json:"newPeers"`
+	Type     ConfigChangeType `json:"type"`
+	OldPeers []int            `json:"oldPeers"` // meaningful only for JointConfig
+	NewPeers []int            `json:"newPeers"`
 }
 
 // ClusterConfig holds the peer sets that determine quorum during and
@@ -84,11 +84,6 @@ type ConfigChange struct {
 // Joint is true. A log entry commits only when it has been replicated
 // to a majority of BOTH sets — this is the invariant that prevents two
 // simultaneous leaders from forming when the cluster is mid-transition.
-type ClusterConfig struct {
-	Joint    bool
-	OldPeers []int // peer IDs in the old configuration
-	NewPeers []int // peer IDs in the new (target) configuration
-}
 
 // LogEntryType distinguishes normal application commands from cluster
 // configuration entries. Config entries are interpreted by Raft itself

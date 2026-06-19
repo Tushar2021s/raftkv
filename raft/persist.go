@@ -2,22 +2,20 @@ package raft
 
 import "encoding/json"
 
-// persistentState is the exact set of fields that must survive a
-// crash (Raft paper Figure 2): currentTerm, votedFor, the log, and —
-// added in stage 6 — the snapshot metadata. Without lastIncludedIndex
-// and lastIncludedTerm, a restarted node can't correctly interpret
-// the log entries that follow the compacted prefix.
+// persistentState is everything that must survive a crash: the Raft
+// paper's Figure 2 fields plus snapshot metadata (stage 6) plus the
+// cluster configuration (stage 7). Without the config, a restarted
+// node wouldn't know which peers to contact or whether it's in the
+// middle of a membership transition.
 type persistentState struct {
-	CurrentTerm       int        `json:"currentTerm"`
-	VotedFor          int        `json:"votedFor"`
-	Log               []LogEntry `json:"log"`
-	LastIncludedIndex int        `json:"lastIncludedIndex"`
-	LastIncludedTerm  int        `json:"lastIncludedTerm"`
+	CurrentTerm       int           `json:"currentTerm"`
+	VotedFor          int           `json:"votedFor"`
+	Log               []LogEntry    `json:"log"`
+	LastIncludedIndex int           `json:"lastIncludedIndex"`
+	LastIncludedTerm  int           `json:"lastIncludedTerm"`
+	ClusterConfig     ClusterConfig `json:"clusterConfig"`
 }
 
-// persistLocked serialises all persistent state and writes it durably
-// via the Persister. Must be called — and must complete — before
-// responding to any RPC that changed persistent state.
 func (n *Node) persistLocked() {
 	data, err := json.Marshal(persistentState{
 		CurrentTerm:       n.currentTerm,
@@ -25,6 +23,7 @@ func (n *Node) persistLocked() {
 		Log:               n.log,
 		LastIncludedIndex: n.lastIncludedIndex,
 		LastIncludedTerm:  n.lastIncludedTerm,
+		ClusterConfig:     n.clusterConfig,
 	})
 	if err != nil {
 		panic(err)
@@ -32,8 +31,6 @@ func (n *Node) persistLocked() {
 	_ = n.persister.SaveState(data)
 }
 
-// restoreLocked loads persisted state on startup. Called once from
-// NewNode before the node is exposed to any other goroutine.
 func (n *Node) restoreLocked() {
 	data, err := n.persister.ReadState()
 	if err != nil || len(data) == 0 {
@@ -48,9 +45,10 @@ func (n *Node) restoreLocked() {
 	n.log = ps.Log
 	n.lastIncludedIndex = ps.LastIncludedIndex
 	n.lastIncludedTerm = ps.LastIncludedTerm
-	// commitIndex and lastApplied start at lastIncludedIndex after
-	// recovery — the snapshot already represents everything up to that
-	// point, and the applyLoop will deliver entries above it.
+	if len(ps.ClusterConfig.NewPeers) > 0 {
+		n.clusterConfig = ps.ClusterConfig
+		n.peers = allPeersLocked(&ps.ClusterConfig, n.id)
+	}
 	n.commitIndex = ps.LastIncludedIndex
 	n.lastApplied = ps.LastIncludedIndex
 }

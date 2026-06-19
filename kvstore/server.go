@@ -36,6 +36,10 @@ func (s *Server) Start() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/kv/", s.handleKV)
 	mux.HandleFunc("/status", s.handleStatus)
+	mux.HandleFunc("/membership/", s.handleMembership)
+	mux.HandleFunc("/cluster/add", s.handleAddServer)
+	mux.HandleFunc("/cluster/remove", s.handleRemoveServer)
+	mux.HandleFunc("/cluster/members", s.handleMembers)
 	log.Printf("node %d listening on %s", s.node.ID(), s.addr)
 	return http.ListenAndServe(s.addr, mux)
 }
@@ -151,4 +155,119 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// handleAddServer processes POST /cluster/add {"newPeerId": N}
+// If this node isn't the leader, it redirects to the leader.
+func (s *Server) handleAddServer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		NewPeerID int `json:"newPeerId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	reply := s.node.AddServer(req.NewPeerID)
+	if !reply.Success && reply.LeaderID >= 0 {
+		if addr, ok := s.peers[reply.LeaderID]; ok {
+			http.Redirect(w, r, "http://"+addr+"/cluster/add", http.StatusTemporaryRedirect)
+			return
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(reply); err != nil {
+		log.Printf("encode error: %v", err)
+	}
+}
+
+// handleRemoveServer processes POST /cluster/remove {"peerId": N}
+func (s *Server) handleRemoveServer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		PeerID int `json:"peerId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	reply := s.node.RemoveServer(req.PeerID)
+	if !reply.Success && reply.LeaderID >= 0 {
+		if addr, ok := s.peers[reply.LeaderID]; ok {
+			http.Redirect(w, r, "http://"+addr+"/cluster/remove", http.StatusTemporaryRedirect)
+			return
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(reply); err != nil {
+		log.Printf("encode error: %v", err)
+	}
+}
+
+// handleMembers returns the current cluster membership.
+func (s *Server) handleMembers(w http.ResponseWriter, r *http.Request) {
+	state, term := s.node.State()
+	peers := s.node.Peers()
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
+		"nodeId": s.node.ID(),
+		"state":  state.String(),
+		"term":   term,
+		"peers":  peers,
+	}); err != nil {
+		log.Printf("encode error: %v", err)
+	}
+}
+
+// handleMembership handles POST /membership/add and /membership/remove.
+// Body: {"nodeId": N, "raftAddr": "host:port", "httpAddr": "host:port"}
+// These endpoints let operators grow or shrink the cluster live.
+func (s *Server) handleMembership(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		NodeID int `json:"nodeId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request body", http.StatusBadRequest)
+		return
+	}
+
+	action := r.URL.Path[len("/membership/"):]
+	var err error
+	switch action {
+	case "add":
+		err = s.node.AddMember(req.NodeID)
+	case "remove":
+		err = s.node.RemoveMember(req.NodeID)
+	default:
+		http.Error(w, "unknown action (use add or remove)", http.StatusBadRequest)
+		return
+	}
+
+	if err != nil {
+		if errors.Is(err, raft.ErrNotLeader) {
+			leaderID := s.node.LeaderID()
+			if addr, ok := s.peers[leaderID]; ok {
+				http.Redirect(w, r, "http://"+addr+r.URL.Path, http.StatusTemporaryRedirect)
+				return
+			}
+			http.Error(w, "not leader, leader unknown", http.StatusServiceUnavailable)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }

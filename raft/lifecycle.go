@@ -12,23 +12,16 @@ const (
 	tickInterval       = 10 * time.Millisecond
 )
 
-// Run starts the node's background goroutines. Call once after construction.
 func (n *Node) Run() {
 	n.mu.Lock()
 	n.resetElectionTimerLocked()
 	n.mu.Unlock()
 
-	// If this node restarted with a persisted snapshot, deliver it to
-	// the state machine immediately so it rebuilds its state before
-	// processing any new log entries.
 	go n.restoreSnapshot()
-
 	go n.electionTicker()
 	go n.applyLoop()
 }
 
-// restoreSnapshot delivers any persisted snapshot to the state machine
-// on startup, then lets the applyLoop take over for entries above it.
 func (n *Node) restoreSnapshot() {
 	data, err := n.persister.ReadSnapshot()
 	if err != nil || len(data) == 0 {
@@ -38,11 +31,9 @@ func (n *Node) restoreSnapshot() {
 	snapIndex := n.lastIncludedIndex
 	snapTerm := n.lastIncludedTerm
 	n.mu.Unlock()
-
 	if snapIndex == 0 {
 		return
 	}
-
 	n.applyCh <- ApplyMsg{
 		SnapshotValid: true,
 		Snapshot:      data,
@@ -51,7 +42,6 @@ func (n *Node) restoreSnapshot() {
 	}
 }
 
-// Stop halts every background goroutine. Safe to call more than once.
 func (n *Node) Stop() {
 	n.stopOnce.Do(func() { close(n.stopCh) })
 }
@@ -81,10 +71,10 @@ func (n *Node) electionTicker() {
 	}
 }
 
-// applyLoop watches commitIndex and delivers every newly committed entry
-// to the application via applyCh, in logical-index order. Updated in
-// stage 6 to use logicalToPhysical() for every log access so it
-// handles post-compaction indices correctly.
+// applyLoop delivers committed entries to the application. Config-change
+// entries are intercepted here and applied directly to the Node's own
+// state (clusterConfig, peers) rather than forwarded to the KV state
+// machine — the state machine has no business knowing about cluster topology.
 func (n *Node) applyLoop() {
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
@@ -98,14 +88,27 @@ func (n *Node) applyLoop() {
 			for n.lastApplied < n.commitIndex {
 				n.lastApplied++
 				phys := n.logicalToPhysical(n.lastApplied)
-				// Skip entries that fall within the snapshot boundary
-				// (shouldn't happen in normal flow, but be defensive).
 				if phys <= 0 || phys >= len(n.log) {
 					continue
 				}
+				entry := n.log[phys]
+
+				// Config-change entries are handled here, inside the
+				// lock — they update n.clusterConfig and n.peers
+				// immediately so that the new quorum rules are in
+				// effect for the very next entry.
+				if isConfigChangeCommand(entry.Command) {
+					cc, err := decodeConfigChange(entry.Command)
+					if err == nil {
+						n.applyConfigChangeLocked(cc)
+					}
+					// Don't forward to the state machine.
+					continue
+				}
+
 				pending = append(pending, ApplyMsg{
 					CommandValid: true,
-					Command:      n.log[phys].Command,
+					Command:      entry.Command,
 					CommandIndex: n.lastApplied,
 				})
 			}

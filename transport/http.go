@@ -71,6 +71,25 @@ func (t *HTTPTransport) Start(node *raft.Node) {
 		writeJSON(w, reply)
 	})
 
+	mux.HandleFunc("/raft/add-server", func(w http.ResponseWriter, r *http.Request) {
+		var args raft.AddServerArgs
+		if err := json.NewDecoder(r.Body).Decode(&args); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		reply := node.AddServer(args.NewPeerID)
+		writeJSON(w, reply)
+	})
+	mux.HandleFunc("/raft/remove-server", func(w http.ResponseWriter, r *http.Request) {
+		var args raft.RemoveServerArgs
+		if err := json.NewDecoder(r.Body).Decode(&args); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		reply := node.RemoveServer(args.PeerID)
+		writeJSON(w, reply)
+	})
+
 	srv := &http.Server{Addr: t.listen, Handler: mux}
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -132,4 +151,20 @@ func (t *HTTPTransport) post(peerID int, path string, body, reply interface{}) e
 func writeJSON(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func (t *HTTPTransport) SendAddServer(peerID int, args *raft.AddServerArgs) (*raft.AddServerReply, error) {
+	var reply raft.AddServerReply
+	if err := t.post(peerID, "/raft/add-server", args, &reply); err != nil {
+		return nil, err
+	}
+	return &reply, nil
+}
+
+func (t *HTTPTransport) SendRemoveServer(peerID int, args *raft.RemoveServerArgs) (*raft.RemoveServerReply, error) {
+	var reply raft.RemoveServerReply
+	if err := t.post(peerID, "/raft/remove-server", args, &reply); err != nil {
+		return nil, err
+	}
+	return &reply, nil
 }

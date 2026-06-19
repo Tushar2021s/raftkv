@@ -1,5 +1,7 @@
 package raft
 
+import "sync"
+
 // startElection turns this node into a Candidate, votes for itself,
 // and asks every peer for its vote in parallel (Raft paper, Section
 // 5.2). If a strict majority agree, becomeLeaderLocked promotes us to
@@ -18,7 +20,10 @@ func (n *Node) startElection() {
 	candidateID := n.id
 	n.mu.Unlock()
 
-	votes := 1 // we voted for ourselves
+	// votesFrom tracks which nodes have granted us a vote so that
+	// quorumReached() can check joint-consensus requirements correctly.
+	votesFrom := map[int]bool{candidateID: true}
+	var votesMu sync.Mutex
 
 	for _, peerID := range peers {
 		go func(peerID int) {
@@ -33,6 +38,10 @@ func (n *Node) startElection() {
 				return // peer unreachable -- its vote simply doesn't count
 			}
 
+			votesMu.Lock()
+			votesFrom[peerID] = reply.VoteGranted
+			votesMu.Unlock()
+
 			n.mu.Lock()
 			defer n.mu.Unlock()
 
@@ -40,14 +49,18 @@ func (n *Node) startElection() {
 				n.becomeFollowerLocked(reply.Term)
 				return
 			}
-			// This reply belongs to an election we've already moved past
-			// (we lost candidacy, or a newer term has since started).
+			// This reply belongs to an election we've already moved past.
 			if n.state != Candidate || n.currentTerm != term {
 				return
 			}
 			if reply.VoteGranted {
-				votes++
-				if votes*2 > len(n.peers)+1 { // strict majority of the whole cluster
+				votesMu.Lock()
+				snapshot := make(map[int]bool, len(votesFrom))
+				for k, v := range votesFrom {
+					snapshot[k] = v
+				}
+				votesMu.Unlock()
+				if n.quorumReached(snapshot) {
 					n.becomeLeaderLocked()
 				}
 			}
@@ -108,8 +121,9 @@ func (n *Node) becomeFollowerLocked(term int) {
 func (n *Node) becomeLeaderLocked() {
 	n.state = Leader
 	n.leaderID = n.id
+	nextIdx := n.lastLogIndexLocked() + 1
 	for _, peerID := range n.peers {
-		n.nextIndex[peerID] = len(n.log)
+		n.nextIndex[peerID] = nextIdx
 		n.matchIndex[peerID] = 0
 	}
 	term := n.currentTerm

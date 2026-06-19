@@ -7,9 +7,9 @@ import (
 	"github.com/Tushar2021s/raftkv/raft"
 )
 
-// LocalTransport routes RPCs by calling a peer's handler methods
-// directly, in-process — no sockets, no serialisation. Used for all
-// tests. InstallSnapshot is now fully wired so snapshot tests work.
+// LocalTransport routes all RPCs (including membership changes) by
+// calling peer handler methods directly, in-process. Implements both
+// raft.Transport and raft.MembershipTransport.
 type LocalTransport struct {
 	mu    sync.RWMutex
 	peers map[int]*raft.Node
@@ -57,13 +57,26 @@ func (t *LocalTransport) SendAppendEntries(peerID int, args *raft.AppendEntriesA
 	return peer.HandleAppendEntries(args), nil
 }
 
-// SendInstallSnapshot is now fully implemented — it routes the RPC
-// directly to the peer's HandleInstallSnapshot handler. This is what
-// lets snapshot tests work without real HTTP.
 func (t *LocalTransport) SendInstallSnapshot(peerID int, args *raft.InstallSnapshotArgs) (*raft.InstallSnapshotReply, error) {
 	peer, err := t.get(peerID)
 	if err != nil {
 		return nil, err
 	}
 	return peer.HandleInstallSnapshot(args), nil
+}
+
+func (t *LocalTransport) SendAddServer(peerID int, args *raft.AddServerArgs) (*raft.AddServerReply, error) {
+	peer, err := t.get(peerID)
+	if err != nil {
+		return nil, err
+	}
+	return peer.AddServer(args.NewPeerID), nil
+}
+
+func (t *LocalTransport) SendRemoveServer(peerID int, args *raft.RemoveServerArgs) (*raft.RemoveServerReply, error) {
+	peer, err := t.get(peerID)
+	if err != nil {
+		return nil, err
+	}
+	return peer.RemoveServer(args.PeerID), nil
 }

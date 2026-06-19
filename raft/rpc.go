@@ -54,3 +54,52 @@ type InstallSnapshotArgs struct {
 type InstallSnapshotReply struct {
 	Term int `json:"term"`
 }
+
+// AddServerArgs/Reply and RemoveServerArgs/Reply are the client-facing
+// RPC types for requesting membership changes. The leader translates
+// these into the two-phase joint-consensus log entries internally.
+type AddServerArgs struct {
+	NewPeerID int `json:"newPeerId"`
+}
+
+type AddServerReply struct {
+	Success bool   `json:"success"`
+	LeaderID int   `json:"leaderId"` // set when Success=false so client can retry
+	Err     string `json:"err,omitempty"`
+}
+
+type RemoveServerArgs struct {
+	PeerID int `json:"peerId"`
+}
+
+type RemoveServerReply struct {
+	Success  bool   `json:"success"`
+	LeaderID int    `json:"leaderId"`
+	Err      string `json:"err,omitempty"`
+}
+
+// -------------------------------------------------------------------------
+// Stage 7 — Dynamic membership (joint consensus, Raft §6)
+// -------------------------------------------------------------------------
+
+// ClusterConfig describes a cluster membership configuration. During a
+// membership change two configs are active simultaneously: C_old (the
+// current members) and C_new (the target members). While the joint
+// config C_old,new is active, a majority of BOTH sets must agree for
+// anything to commit.
+type ClusterConfig struct {
+	// Members is the set of node IDs that form this configuration.
+	Members []int `json:"members"`
+}
+
+// ConfigChangeArgs is the command encoded into a log entry when the
+// leader initiates a membership change. It carries both the old and new
+// configs so every node in the cluster can reconstruct the joint phase
+// from the log alone, without any out-of-band signalling.
+type ConfigChangeArgs struct {
+	// IsJoint is true for the C_old,new entry and false for the final
+	// C_new-only entry that completes the transition.
+	IsJoint bool          `json:"isJoint"`
+	Old     ClusterConfig `json:"old,omitempty"`
+	New     ClusterConfig `json:"new"`
+}

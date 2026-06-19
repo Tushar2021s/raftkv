@@ -1,10 +1,10 @@
 package raft
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
-// HandleAppendEntries implements the receiver side of AppendEntries
-// (Raft paper Figure 2). Uses logicalToPhysical() for all log accesses
-// so it stays correct after log compaction.
 func (n *Node) HandleAppendEntries(args *AppendEntriesArgs) *AppendEntriesReply {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -29,7 +29,6 @@ func (n *Node) HandleAppendEntries(args *AppendEntriesArgs) *AppendEntriesReply 
 
 	prevPhys := n.logicalToPhysical(args.PrevLogIndex)
 	if prevPhys < 0 {
-		// Our snapshot already covers PrevLogIndex — just accept.
 		return &AppendEntriesReply{Term: n.currentTerm, Success: true}
 	}
 
@@ -53,7 +52,6 @@ func (n *Node) HandleAppendEntries(args *AppendEntriesArgs) *AppendEntriesReply 
 		logical := args.PrevLogIndex + 1 + i
 		phys := n.logicalToPhysical(logical)
 		if phys <= 0 {
-			// Already covered by snapshot.
 			continue
 		}
 		if logical <= n.lastLogIndexLocked() {
@@ -98,9 +96,6 @@ func (n *Node) broadcastAppendEntries(term int) {
 	}
 }
 
-// replicateToPeer sends one peer everything it's missing. If the peer
-// needs entries that have already been compacted, it sends a snapshot
-// instead. All log accesses use logicalToPhysical().
 func (n *Node) replicateToPeer(peerID int, term int) {
 	n.mu.Lock()
 	if n.state != Leader || n.currentTerm != term {
@@ -111,14 +106,10 @@ func (n *Node) replicateToPeer(peerID int, term int) {
 	nextIdx := n.nextIndex[peerID]
 	prevLogical := nextIdx - 1
 
-	// If the peer needs entries before our snapshot boundary, send snapshot.
 	if prevLogical < n.lastIncludedIndex {
 		snapIndex := n.lastIncludedIndex
 		snapTerm := n.lastIncludedTerm
 		n.mu.Unlock()
-
-		// Read snapshot from disk outside the lock to avoid holding
-		// n.mu during file I/O.
 		snapData, _ := n.persister.ReadSnapshot()
 		n.sendInstallSnapshot(peerID, term, snapIndex, snapTerm, snapData)
 		return
@@ -131,7 +122,6 @@ func (n *Node) replicateToPeer(peerID int, term int) {
 	}
 	prevLogTerm := n.log[prevPhys].Term
 
-	// Collect entries to send.
 	var entries []LogEntry
 	startPhys := n.logicalToPhysical(nextIdx)
 	if startPhys > 0 && startPhys < len(n.log) {
@@ -174,7 +164,6 @@ func (n *Node) replicateToPeer(peerID int, term int) {
 		return
 	}
 
-	// Fast backtracking.
 	if reply.ConflictTerm == -1 {
 		n.nextIndex[peerID] = reply.ConflictIndex
 	} else {
@@ -192,15 +181,12 @@ func (n *Node) replicateToPeer(peerID int, term int) {
 			n.nextIndex[peerID] = reply.ConflictIndex
 		}
 	}
-
 	go n.replicateToPeer(peerID, term)
 }
 
-// sendInstallSnapshot fires the InstallSnapshot RPC and updates
-// nextIndex/matchIndex on success.
 func (n *Node) sendInstallSnapshot(peerID, term, snapIndex, snapTerm int, data []byte) {
 	if len(data) == 0 {
-		return // no snapshot to send yet
+		return
 	}
 	args := &InstallSnapshotArgs{
 		Term:              term,
@@ -233,9 +219,9 @@ func (n *Node) sendInstallSnapshot(peerID, term, snapIndex, snapTerm int, data [
 	}
 }
 
-// updateCommitIndexLocked advances commitIndex when an entry reaches
-// majority. Only entries from the current term are directly committed
-// (Raft §5.4.2).
+// updateCommitIndexLocked uses quorumReachedLocked so that during joint
+// consensus BOTH old and new majorities must confirm an entry before
+// it commits. This is the §6 safety invariant.
 func (n *Node) updateCommitIndexLocked() {
 	if n.state != Leader {
 		return
@@ -248,15 +234,10 @@ func (n *Node) updateCommitIndexLocked() {
 		if n.log[phys].Term != n.currentTerm {
 			continue
 		}
-		count := 1
-		for _, peerID := range n.peers {
-			if n.matchIndex[peerID] >= idx {
-				count++
-			}
-		}
-		if count*2 > len(n.peers)+1 {
+		if n.quorumReachedLocked(idx) {
 			n.commitIndex = idx
 			return
 		}
 	}
 }
+

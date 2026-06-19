@@ -29,3 +29,12 @@ type Persister interface {
 	SaveSnapshot(snapshot []byte) error
 	ReadSnapshot() ([]byte, error)
 }
+
+// MembershipTransport extends Transport with membership change RPCs.
+// Kept separate so existing Transport implementations (LocalTransport,
+// HTTPTransport) continue to compile unchanged during the transition.
+type MembershipTransport interface {
+	Transport
+	SendAddServer(peerID int, args *AddServerArgs) (*AddServerReply, error)
+	SendRemoveServer(peerID int, args *RemoveServerArgs) (*RemoveServerReply, error)
+}

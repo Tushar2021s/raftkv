@@ -31,7 +31,7 @@ A production-grade distributed key-value store built on the Raft consensus algor
 - [x] Stage 4 — KV state machine: HTTP API, leader redirect, idempotent writes, CLI client
 - [x] Stage 5 — Crash-safe persistence: fsync, atomic rename, CRC32 checksums
 - [x] Stage 6 — Snapshotting / log compaction: TakeSnapshot, InstallSnapshot RPC, auto-compaction
-- [ ] Stage 7 — Dynamic membership changes (add/remove nodes live)
+- [x] Stage 7 — Dynamic membership changes: joint consensus, AddMember, RemoveMember, leader self-removal
 - [ ] Stage 8 — Chaos-testing harness (simulated network partitions, drops, kills)
 - [ ] Stage 9 — Benchmarking (throughput, latency percentiles, failover time)
 - [ ] Stage 10 — Architecture write-up with real numbers

@@ -1,0 +1,14 @@
+# Build artifacts
+/bin/
+*.exe
+*.test
+*.out
+
+# OS-specific junk
+.DS_Store
+Thumbs.db
+
+# Editor/IDE
+.idea/
+.vscode/
+*.iml
